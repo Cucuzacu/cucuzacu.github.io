@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebLinux Terminal</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+<script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+
+<style>
+  body { margin: 0; background: black; }
+  canvas { display: none; }
+</style>
+</head>
+
+<body>
+
+<div id="terminal"></div>
+<canvas id="canvas"></canvas>
+
+<script>
+const term = new Terminal({
+  cursorBlink: true,
+  fontFamily: "monospace",
+  cols: 80,
+  rows: 25,
+  theme: { background: "#000000" }
+});
+
+term.open(document.getElementById("terminal"));
+term.write("WebLinux Terminal\r\n");
+
+let inputBuffer = "";
+
+term.onData(function(data) {
+  const char = data;
+
+  if (char === "\r") {
+    term.write("\r\n");
+    Module.stdinBuffer += inputBuffer + "\n";
+    inputBuffer = "";
+  }
+
+  else if (char === "\u007f") {
+    if (inputBuffer.length > 0) {
+      inputBuffer = inputBuffer.slice(0, -1);
+      term.write("\b \b");
+    }
+  }
+
+  else {
+    inputBuffer += char;
+    term.write(char);
+  }
+});
+
+var Module = {
+  stdinBuffer: "",
+
+  print: function(text) {
+    term.write(text + "\r\n");
+  },
+
+  printErr: function(text) {
+    term.write("\x1b[31m" + text + "\x1b[0m\r\n");
+  },
+
+  stdin: function() {
+    if (Module.stdinBuffer.length === 0) return undefined;
+
+    const char = Module.stdinBuffer.charCodeAt(0);
+    Module.stdinBuffer = Module.stdinBuffer.slice(1);
+    return char;
+  },
+
+  canvas: document.getElementById("canvas"),
+
+  setStatus: function(text) {
+    term.write("[status] " + text + "\r\n");
+  }
+};
+
+window.onerror = function(msg) {
+  term.write("\x1b[31m[error] " + msg + "\x1b[0m\r\n");
+};
+
+Module.canvas.addEventListener("webglcontextlost", function(e) {
+  term.write("\x1b[31m[error] WebGL context lost\x1b[0m\r\n");
+  e.preventDefault();
+}, false);
+
+</script>
+
+<script async src="WebLinux.js"></script>
+
+</body>
+</html>
