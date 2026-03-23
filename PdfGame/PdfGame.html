@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PDF Game Maker very cool</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body { background:#111; color:#0f0; font-family:monospace; }
+textarea { width:100%; height:200px; }
+button { padding:10px; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<h2>PDF Game Maker</h2>
+
+<p>Legend:</p>
+<pre>
+. = empty
+# = wall
+^ = spike
+K = key
+D = door
+E = exit
+S = start
+</pre>
+
+<textarea id="map">
+########
+#S....E#
+#..#...#
+#..K.D.#
+#..^...#
+########
+</textarea>
+
+<button onclick="generate()">Generate PDF</button>
+
+<script>
+const { jsPDF } = window.jspdf;
+
+function parseMap(t){ return t.trim().split("\n").map(r=>r.split("")); }
+
+function findStart(map){
+    for(let y=0;y<map.length;y++)
+        for(let x=0;x<map[0].length;x++)
+            if(map[y][x]==="S") return {x,y};
+}
+
+function keyOf(x,y,d,k){ return `${x},${y},${d},${k}`; }
+
+const DIRS = [
+    {dx:0,dy:-1},
+    {dx:1,dy:0},
+    {dx:0,dy:1},
+    {dx:-1,dy:0}
+];
+
+async function renderFP(map, s){
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75,1,0.1,1000);
+    const renderer = new THREE.WebGLRenderer({preserveDrawingBuffer:true});
+    renderer.setSize(512,512);
+
+    const light = new THREE.PointLight(0xffffff,1);
+    light.position.set(5,10,5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x444444));
+
+    function cube(x,y,color,h=1){
+        const geo = new THREE.BoxGeometry(1,h,1);
+        const mat = new THREE.MeshStandardMaterial({color});
+        const m = new THREE.Mesh(geo,mat);
+        m.position.set(x, h/2, y);
+        scene.add(m);
+    }
+
+    function spike(x,y){
+        const geo = new THREE.ConeGeometry(0.5,1,4);
+        const mat = new THREE.MeshStandardMaterial({color:0xff0000});
+        const m = new THREE.Mesh(geo,mat);
+        m.position.set(x,0.5,y);
+        scene.add(m);
+    }
+
+    for(let y=0;y<map.length;y++){
+        for(let x=0;x<map[0].length;x++){
+            let t=map[y][x];
+
+            if(t==="#") cube(x,y,0x555555,2);
+            if(t==="K") cube(x,y,0xffff00);
+            if(t==="D") cube(x,y,0x0000ff,1.5);
+            if(t==="E") cube(x,y,0x00ff00);
+            if(t==="^") spike(x,y);
+        }
+    }
+
+    camera.position.set(s.x, 0.7, s.y);
+
+    let dir = DIRS[s.d];
+    camera.lookAt(s.x + dir.dx, 0.7, s.y + dir.dy);
+
+    renderer.render(scene,camera);
+    return renderer.domElement.toDataURL();
+}
+
+async function generate(){
+    const map = parseMap(document.getElementById("map").value);
+    const start = findStart(map);
+
+    let states={}, list=[], queue=[];
+
+    function add(x,y,d,k){
+        let id=keyOf(x,y,d,k);
+        if(!(id in states)){
+            states[id]=list.length+1;
+            list.push({x,y,d,k});
+            queue.push({x,y,d,k});
+        }
+    }
+
+    add(start.x,start.y,0,false);
+
+    while(queue.length){
+        let s=queue.shift();
+
+        add(s.x,s.y,(s.d+3)%4,s.k);
+
+        add(s.x,s.y,(s.d+1)%4,s.k);
+
+        let dir=DIRS[s.d];
+        let nx=s.x+dir.dx, ny=s.y+dir.dy;
+
+        if(map[ny] && map[ny][nx]){
+            let t=map[ny][nx];
+            let k=s.k;
+
+            if(t!=="#"){
+                if(t==="K") k=true;
+                if(!(t==="D"&&!k)){
+                    add(nx,ny,s.d,k);
+                }
+            }
+        }
+    }
+
+    const doc = new jsPDF();
+
+    let deathPage = list.length + 1;
+
+    for(let i=0;i<list.length;i++){
+        let s=list[i];
+        if(i>0) doc.addPage();
+
+        let img = await renderFP(map,s);
+        doc.addImage(img,"PNG",10,10,180,180);
+
+        let y=200;
+
+        let leftPage = states[keyOf(s.x,s.y,(s.d+3)%4,s.k)];
+        doc.text("Turn Left",10,y);
+        doc.link(10,y-5,50,6,{pageNumber:leftPage});
+        y+=10;
+
+        let rightPage = states[keyOf(s.x,s.y,(s.d+1)%4,s.k)];
+        doc.text("Turn Right",10,y);
+        doc.link(10,y-5,50,6,{pageNumber:rightPage});
+        y+=10;
+
+        let dir=DIRS[s.d];
+        let nx=s.x+dir.dx, ny=s.y+dir.dy;
+
+        if(map[ny] && map[ny][nx]){
+            let t=map[ny][nx];
+            let k=s.k;
+
+            if(t!=="#"){
+                if(t==="^"){
+                    doc.text("Forward (WIN)",10,y);
+                    doc.link(10,y-5,50,6,{pageNumber:deathPage});
+                } else {
+                    if(t==="K") k=true;
+                    if(!(t==="D"&&!k)){
+                        let p=states[keyOf(nx,ny,s.d,k)];
+                        doc.text("Forward",10,y);
+                        doc.link(10,y-5,50,6,{pageNumber:p});
+                    }
+                }
+                y+=10;
+            }
+        }
+
+        if(map[s.y][s.x]==="E"){
+            doc.setFontSize(20);
+            doc.text("YOU WIN",10,y+10);
+        }
+    }
+
+    doc.addPage();
+    doc.setFontSize(30);
+    doc.text("UR DED",50,100);
+
+    doc.save("pdfgame.pdf");
+}
+</script>
+
+</body>
+</html>
