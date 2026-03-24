@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>PDF Game Maker very cool</title>
+<title>PDF Game Maker</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
-body { background:#111; color:#0f0; font-family:monospace; }
+body { background:#fff; color:#000; font-family:monospace; }
 textarea { width:100%; height:200px; }
 button { padding:10px; margin-top:10px; }
 </style>
@@ -42,7 +42,17 @@ S = start
 <script>
 const { jsPDF } = window.jspdf;
 
-function parseMap(t){ return t.trim().split("\n").map(r=>r.split("")); }
+function parseMap(t){
+    return t.trim().split("\n").map(r=>r.split(""));
+}
+
+function cloneMap(map){
+    return map.map(r=>r.slice());
+}
+
+function mapToString(map){
+    return map.map(r=>r.join("")).join("\n");
+}
 
 function findStart(map){
     for(let y=0;y<map.length;y++)
@@ -50,7 +60,9 @@ function findStart(map){
             if(map[y][x]==="S") return {x,y};
 }
 
-function keyOf(x,y,d,k){ return `${x},${y},${d},${k}`; }
+function keyOf(x,y,d,k,map){
+    return `${x},${y},${d},${k},${mapToString(map)}`;
+}
 
 const DIRS = [
     {dx:0,dy:-1},
@@ -113,36 +125,47 @@ async function generate(){
 
     let states={}, list=[], queue=[];
 
-    function add(x,y,d,k){
-        let id=keyOf(x,y,d,k);
+    function add(x,y,d,k,map){
+        let id=keyOf(x,y,d,k,map);
         if(!(id in states)){
             states[id]=list.length+1;
-            list.push({x,y,d,k});
-            queue.push({x,y,d,k});
+            list.push({x,y,d,k,map});
+            queue.push({x,y,d,k,map});
         }
     }
 
-    add(start.x,start.y,0,false);
+    add(start.x,start.y,0,false,map);
 
     while(queue.length){
         let s=queue.shift();
 
-        add(s.x,s.y,(s.d+3)%4,s.k);
-
-        add(s.x,s.y,(s.d+1)%4,s.k);
+        add(s.x,s.y,(s.d+3)%4,s.k,s.map);
+        add(s.x,s.y,(s.d+1)%4,s.k,s.map);
 
         let dir=DIRS[s.d];
         let nx=s.x+dir.dx, ny=s.y+dir.dy;
 
-        if(map[ny] && map[ny][nx]){
-            let t=map[ny][nx];
+        if(s.map[ny] && s.map[ny][nx]){
+            let t=s.map[ny][nx];
             let k=s.k;
+            let newMap = cloneMap(s.map);
 
             if(t!=="#"){
-                if(t==="K") k=true;
-                if(!(t==="D"&&!k)){
-                    add(nx,ny,s.d,k);
+                if(t==="K" && !k){
+                    k=true;
+                    newMap[ny][nx]="."; // key disappears :(
                 }
+
+                if(t==="D"){
+                    if(k){
+                        k=false;
+                        newMap[ny][nx]="."; // door disappears :(
+                    } else {
+                        continue;
+                    }
+                }
+
+                add(nx,ny,s.d,k,newMap);
             }
         }
     }
@@ -150,22 +173,26 @@ async function generate(){
     const doc = new jsPDF();
 
     let deathPage = list.length + 1;
+    let winPage = list.length + 2;
 
     for(let i=0;i<list.length;i++){
         let s=list[i];
         if(i>0) doc.addPage();
 
-        let img = await renderFP(map,s);
+        let img = await renderFP(s.map,s);
         doc.addImage(img,"PNG",10,10,180,180);
 
         let y=200;
 
-        let leftPage = states[keyOf(s.x,s.y,(s.d+3)%4,s.k)];
+        doc.text(`Key: ${s.k ? "YES" : "NO"}`,120,y);
+        y+=10;
+
+        let leftPage = states[keyOf(s.x,s.y,(s.d+3)%4,s.k,s.map)];
         doc.text("Turn Left",10,y);
         doc.link(10,y-5,50,6,{pageNumber:leftPage});
         y+=10;
 
-        let rightPage = states[keyOf(s.x,s.y,(s.d+1)%4,s.k)];
+        let rightPage = states[keyOf(s.x,s.y,(s.d+1)%4,s.k,s.map)];
         doc.text("Turn Right",10,y);
         doc.link(10,y-5,50,6,{pageNumber:rightPage});
         y+=10;
@@ -173,18 +200,36 @@ async function generate(){
         let dir=DIRS[s.d];
         let nx=s.x+dir.dx, ny=s.y+dir.dy;
 
-        if(map[ny] && map[ny][nx]){
-            let t=map[ny][nx];
+        if(s.map[ny] && s.map[ny][nx]){
+            let t=s.map[ny][nx];
             let k=s.k;
+            let newMap = cloneMap(s.map);
 
             if(t!=="#"){
                 if(t==="^"){
-                    doc.text("Forward (WIN)",10,y);
+                    doc.text("Forward",10,y);
                     doc.link(10,y-5,50,6,{pageNumber:deathPage});
-                } else {
-                    if(t==="K") k=true;
-                    if(!(t==="D"&&!k)){
-                        let p=states[keyOf(nx,ny,s.d,k)];
+                }
+		else if(t==="E"){
+    		    doc.text("Forward",10,y);
+    		    doc.link(10,y-5,50,6,{pageNumber:winPage});
+		} else {
+                    if(t==="K" && !k){
+                        k=true;
+                        newMap[ny][nx]=".";
+                    }
+
+                    if(t==="D"){
+                        if(k){
+                            k=false;
+                            newMap[ny][nx]=".";
+                        } else {
+                            t="#";
+                        }
+                    }
+
+                    if(t!=="#"){
+                        let p=states[keyOf(nx,ny,s.d,k,newMap)];
                         doc.text("Forward",10,y);
                         doc.link(10,y-5,50,6,{pageNumber:p});
                     }
@@ -192,16 +237,15 @@ async function generate(){
                 y+=10;
             }
         }
-
-        if(map[s.y][s.x]==="E"){
-            doc.setFontSize(20);
-            doc.text("YOU WIN",10,y+10);
-        }
     }
 
     doc.addPage();
     doc.setFontSize(30);
     doc.text("UR DED",50,100);
+
+    doc.addPage();
+    doc.setFontSize(30);
+    doc.text("YOU WIN",50,100);
 
     doc.save("pdfgame.pdf");
 }
